@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { CELL_TYPES } from "../world/MapGenerator.js";
 
 const ENEMY_HALF_SIZE = 0.4;
@@ -11,6 +12,32 @@ const CHASE_EXIT_DISTANCE = 12;
 const LINE_OF_SIGHT_STEP = 0.2;
 const SHOOT_INTERVAL_SECONDS = 1.5;
 const SHOOT_OFFSET = 0.55;
+const SHOOT_ANIM_SECONDS = 0.2;
+const ENEMY_MODEL_SCALE = 1;
+const ENEMY_MODEL_URL = "/models/Swat.glb";
+const ENEMY_MODEL_COLOR = 0xff0000;
+const ENEMY_WEAPON_MODEL_URL = "/models/DesertEagle.glb";
+
+function applySolidColor(material, colorHex) {
+  if (!material) {
+    return;
+  }
+
+  if ("map" in material) {
+    material.map = null;
+  }
+  if ("emissiveMap" in material) {
+    material.emissiveMap = null;
+  }
+  if ("color" in material && material.color) {
+    material.color.setHex(colorHex);
+  }
+  if ("emissive" in material && material.emissive) {
+    material.emissive.setHex(0x000000);
+  }
+
+  material.needsUpdate = true;
+}
 
 const ENEMY_STATE = {
   PATROL: "PATROL",
@@ -29,34 +56,90 @@ export class Enemy {
     this.rng = rng;
 
     this.root = new THREE.Group();
-
-    const bodyGeometry = new THREE.PlaneGeometry(0.8, 0.8);
-    const bodyMaterial = new THREE.MeshBasicMaterial({
-      color: 0xe63946,
-      side: THREE.DoubleSide,
-    });
-    this.bodyMesh = new THREE.Mesh(bodyGeometry, bodyMaterial);
-    this.bodyMesh.rotation.x = -Math.PI / 2;
-    this.root.add(this.bodyMesh);
-
-    const indicatorGeometry = new THREE.PlaneGeometry(0.15, 0.3);
-    const indicatorMaterial = new THREE.MeshBasicMaterial({
-      color: 0x3a1115,
-      side: THREE.DoubleSide,
-    });
-    this.indicatorMesh = new THREE.Mesh(indicatorGeometry, indicatorMaterial);
-    this.indicatorMesh.rotation.x = -Math.PI / 2;
-    this.indicatorMesh.position.set(0, 0.01, 0.28);
-    this.root.add(this.indicatorMesh);
-
     this.root.position.set(0, 0.02, 0);
 
     this.state = ENEMY_STATE.PATROL;
     this.waitTimer = 0;
     this.alive = true;
+    this.deathFinished = false;
     this.shootTimer = SHOOT_INTERVAL_SECONDS;
+    this.shootAnimTimer = 0;
     this.direction = new THREE.Vector3(0, 0, 1);
     this.patrolTarget = this.#pickRandomPatrolTarget();
+
+    this.loaded = false;
+    this.model = null;
+    this.weaponMesh = null;
+    this.mixer = null;
+    this.clips = {};
+    this.currentAction = null;
+    this.currentAnimName = "";
+
+    const loader = new GLTFLoader();
+    loader.load(
+      ENEMY_MODEL_URL,
+      (gltf) => {
+        this.model = gltf.scene;
+        this.model.scale.setScalar(ENEMY_MODEL_SCALE);
+
+        this.model.traverse((object) => {
+          if (!object.isMesh) {
+            return;
+          }
+
+          if (Array.isArray(object.material)) {
+            object.material.forEach((material) =>
+              applySolidColor(material, ENEMY_MODEL_COLOR),
+            );
+          } else {
+            applySolidColor(object.material, ENEMY_MODEL_COLOR);
+          }
+        });
+
+        this.root.add(this.model);
+
+        let handBone = null;
+        this.model.traverse((node) => {
+          if (node.name === "WristR") {
+            handBone = node;
+          }
+        });
+
+        const weaponLoader = new GLTFLoader();
+        weaponLoader.load(ENEMY_WEAPON_MODEL_URL, (weaponGltf) => {
+          this.weaponMesh = weaponGltf.scene;
+
+          if (handBone) {
+            handBone.add(this.weaponMesh);
+          } else {
+            this.model.add(this.weaponMesh);
+          }
+
+          this.weaponMesh.position.set(0, 0.002, 0);
+          this.weaponMesh.rotation.set(-Math.PI / 2, 0, Math.PI / 2);
+          this.weaponMesh.scale.set(0.0009, 0.0009, 0.0009);
+        });
+
+        this.mixer = new THREE.AnimationMixer(this.model);
+        this.clips = {};
+        gltf.animations.forEach((clip) => {
+          this.clips[clip.name] = clip;
+        });
+
+        this.mixer.addEventListener("finished", () => {
+          if (this.currentAnimName === "Death") {
+            this.deathFinished = true;
+          }
+        });
+
+        this.loaded = true;
+        this.playAnimation("Idle_Gun", 0);
+      },
+      undefined,
+      (error) => {
+        console.error("Failed to load enemy model:", error);
+      },
+    );
   }
 
   get mesh() {
@@ -71,26 +154,89 @@ export class Enemy {
     return this.alive;
   }
 
+  canBeRemoved() {
+    return !this.alive && (!this.loaded || this.deathFinished);
+  }
+
+  playAnimation(name, fadeTime = 0.2, loopOnce = false) {
+    if (!this.loaded || !this.mixer || this.currentAnimName === name) {
+      return;
+    }
+
+    const clip =
+      this.clips[`CharacterArmature|${name}`] ?? this.clips[name] ?? null;
+    if (!clip) {
+      return;
+    }
+
+    const next = this.mixer.clipAction(clip);
+    if (loopOnce) {
+      next.setLoop(THREE.LoopOnce, 1);
+      next.clampWhenFinished = true;
+    } else {
+      next.setLoop(THREE.LoopRepeat, Infinity);
+      next.clampWhenFinished = false;
+    }
+
+    if (this.currentAction && this.currentAction !== next) {
+      this.currentAction.crossFadeTo(next, fadeTime, true);
+    }
+
+    next.reset().play();
+    this.currentAction = next;
+    this.currentAnimName = name;
+  }
+
   kill() {
+    if (!this.alive) {
+      return;
+    }
+
     this.alive = false;
+    this.shootAnimTimer = 0;
+    this.playAnimation("Death", 0.2, true);
   }
 
   destroy(scene) {
     scene.remove(this.root);
-    this.bodyMesh.geometry.dispose();
-    this.bodyMesh.material.dispose();
-    this.indicatorMesh.geometry.dispose();
-    this.indicatorMesh.material.dispose();
+
+    this.root.traverse((object) => {
+      if (!object.isMesh) {
+        return;
+      }
+
+      object.geometry?.dispose();
+      if (Array.isArray(object.material)) {
+        object.material.forEach((material) => material.dispose());
+      } else {
+        object.material?.dispose();
+      }
+    });
   }
 
   update(delta, playerPosition, grid, _bullets) {
-    if (!this.alive) {
+    if (!this.loaded) {
       return null;
     }
 
-    let shot = null;
+    if (this.mixer) {
+      this.mixer.update(delta);
+    }
 
-    const toPlayer = new THREE.Vector3().subVectors(playerPosition, this.root.position);
+    if (!this.alive) {
+      this.playAnimation("Death", 0.2, true);
+      return null;
+    }
+
+    this.shootAnimTimer = Math.max(0, this.shootAnimTimer - delta);
+    let shot = null;
+    let isMoving = false;
+    let isWaiting = false;
+
+    const toPlayer = new THREE.Vector3().subVectors(
+      playerPosition,
+      this.root.position,
+    );
     toPlayer.y = 0;
     const distanceToPlayer = toPlayer.length();
     const canSeePlayer =
@@ -117,6 +263,7 @@ export class Enemy {
         this.direction.copy(toPlayer);
         this.root.rotation.y = Math.atan2(this.direction.x, this.direction.z);
         this.#moveWithCollision(delta, this.direction, CHASE_SPEED, grid);
+        isMoving = true;
       }
 
       this.shootTimer -= delta;
@@ -138,32 +285,54 @@ export class Enemy {
         }
 
         this.shootTimer = SHOOT_INTERVAL_SECONDS;
+        this.shootAnimTimer = SHOOT_ANIM_SECONDS;
+      }
+
+      if (this.shootAnimTimer > 0) {
+        this.playAnimation("Idle_Gun_Shoot");
+      } else {
+        this.playAnimation("Run");
       }
 
       return shot;
     }
 
     if (this.waitTimer > 0) {
+      isWaiting = true;
       this.waitTimer -= delta;
       if (this.waitTimer <= 0) {
         this.patrolTarget = this.#pickRandomPatrolTarget();
       }
-      return null;
+    } else {
+      const toTarget = new THREE.Vector3().subVectors(
+        this.patrolTarget,
+        this.root.position,
+      );
+      toTarget.y = 0;
+      const distanceToTarget = toTarget.length();
+
+      if (distanceToTarget <= ARRIVAL_DISTANCE) {
+        this.waitTimer = PATROL_WAIT_SECONDS;
+        isWaiting = true;
+      } else {
+        toTarget.multiplyScalar(1 / Math.max(distanceToTarget, 1e-6));
+        this.direction.copy(toTarget);
+        this.root.rotation.y = Math.atan2(this.direction.x, this.direction.z);
+        this.#moveWithCollision(delta, this.direction, PATROL_SPEED, grid);
+        isMoving = true;
+      }
     }
 
-    const toTarget = new THREE.Vector3().subVectors(this.patrolTarget, this.root.position);
-    toTarget.y = 0;
-    const distanceToTarget = toTarget.length();
-
-    if (distanceToTarget <= ARRIVAL_DISTANCE) {
-      this.waitTimer = PATROL_WAIT_SECONDS;
-      return;
+    if (this.shootAnimTimer > 0) {
+      this.playAnimation("Idle_Gun_Shoot");
+    } else if (isMoving) {
+      this.playAnimation("Walk");
+    } else if (isWaiting) {
+      this.playAnimation("Idle_Gun");
+    } else {
+      this.playAnimation("Idle_Gun");
     }
 
-    toTarget.multiplyScalar(1 / Math.max(distanceToTarget, 1e-6));
-    this.direction.copy(toTarget);
-    this.root.rotation.y = Math.atan2(this.direction.x, this.direction.z);
-    this.#moveWithCollision(delta, this.direction, PATROL_SPEED, grid);
     return null;
   }
 
@@ -192,10 +361,26 @@ export class Enemy {
 
   #overlapsWall(worldX, worldZ, grid) {
     return (
-      this.#isWallAtWorld(worldX - ENEMY_HALF_SIZE, worldZ - ENEMY_HALF_SIZE, grid) ||
-      this.#isWallAtWorld(worldX + ENEMY_HALF_SIZE, worldZ - ENEMY_HALF_SIZE, grid) ||
-      this.#isWallAtWorld(worldX - ENEMY_HALF_SIZE, worldZ + ENEMY_HALF_SIZE, grid) ||
-      this.#isWallAtWorld(worldX + ENEMY_HALF_SIZE, worldZ + ENEMY_HALF_SIZE, grid)
+      this.#isWallAtWorld(
+        worldX - ENEMY_HALF_SIZE,
+        worldZ - ENEMY_HALF_SIZE,
+        grid,
+      ) ||
+      this.#isWallAtWorld(
+        worldX + ENEMY_HALF_SIZE,
+        worldZ - ENEMY_HALF_SIZE,
+        grid,
+      ) ||
+      this.#isWallAtWorld(
+        worldX - ENEMY_HALF_SIZE,
+        worldZ + ENEMY_HALF_SIZE,
+        grid,
+      ) ||
+      this.#isWallAtWorld(
+        worldX + ENEMY_HALF_SIZE,
+        worldZ + ENEMY_HALF_SIZE,
+        grid,
+      )
     );
   }
 
@@ -229,7 +414,11 @@ export class Enemy {
     const dirX = dx / distance;
     const dirZ = dz / distance;
 
-    for (let traveled = LINE_OF_SIGHT_STEP; traveled < distance; traveled += LINE_OF_SIGHT_STEP) {
+    for (
+      let traveled = LINE_OF_SIGHT_STEP;
+      traveled < distance;
+      traveled += LINE_OF_SIGHT_STEP
+    ) {
       const sampleX = from.x + dirX * traveled;
       const sampleZ = from.z + dirZ * traveled;
 

@@ -5,6 +5,8 @@ import { Enemy } from "../entities/Enemy.js";
 import { EnemyBullet } from "../entities/EnemyBullet.js";
 import { Player } from "../entities/Player.js";
 import { Crosshair } from "../ui/Crosshair.js";
+import { DeathScreen } from "../ui/DeathScreen.js";
+import { StartScreen } from "../ui/StartScreen.js";
 import { RNG } from "../utils/RNG.js";
 import { CELL_TYPES, MapGenerator } from "../world/MapGenerator.js";
 import { MapRenderer } from "../world/MapRenderer.js";
@@ -62,6 +64,12 @@ export class Game {
     this.enemyBullets = [];
     this.enemies = [];
     this.playerAlive = true;
+    this.playerDead = false;
+    this.gameStarted = false;
+    this.startScreen = null;
+    this.deathScreen = null;
+    this.deathScreenTimeoutId = null;
+    this.noInputKeys = new Set();
     this.keys = new Set();
     this.mouseWorldPos = null;
     this.mouseScreenX = window.innerWidth * 0.5;
@@ -108,7 +116,7 @@ export class Game {
   }
 
   start() {
-    document.body.style.cursor = "none";
+    document.body.style.cursor = "";
     window.addEventListener("resize", this.onResize);
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
@@ -116,7 +124,16 @@ export class Game {
     window.addEventListener("mousedown", this.onMouseDown);
     window.addEventListener("mouseup", this.onMouseUp);
     window.addEventListener("contextmenu", this.onContextMenu);
-    this.rafId = requestAnimationFrame(this.loop);
+
+    this.startScreen = new StartScreen(() => {
+      this.startScreen = null;
+      this.gameStarted = true;
+      this.lastTime = performance.now();
+      document.body.style.cursor = "none";
+      this.rafId = requestAnimationFrame(this.loop);
+    });
+
+    this.render();
   }
 
   stop() {
@@ -146,6 +163,18 @@ export class Game {
     this.effects.destroy();
     this.crosshair.destroy();
     this.orbitControls.dispose();
+    if (this.startScreen) {
+      this.startScreen.hide();
+      this.startScreen = null;
+    }
+    if (this.deathScreenTimeoutId !== null) {
+      clearTimeout(this.deathScreenTimeoutId);
+      this.deathScreenTimeoutId = null;
+    }
+    if (this.deathScreen) {
+      this.deathScreen.destroy();
+      this.deathScreen = null;
+    }
     document.body.style.cursor = "";
 
     if (this.rafId !== null) {
@@ -164,6 +193,10 @@ export class Game {
   }
 
   #onKeyDown(event) {
+    if (!this.gameStarted || this.playerDead) {
+      return;
+    }
+
     this.keys.add(event.code);
 
     if (event.key === "a" || event.key === "A") {
@@ -175,6 +208,10 @@ export class Game {
   }
 
   #onKeyUp(event) {
+    if (!this.gameStarted) {
+      return;
+    }
+
     this.keys.delete(event.code);
   }
 
@@ -204,11 +241,12 @@ export class Game {
   }
 
   #onMouseDown(event) {
+    if (!this.gameStarted || this.playerDead) {
+      return;
+    }
+
     if (event.button === 2) {
       event.preventDefault();
-      this.isOrbiting = true;
-      this.orbitControls.target.copy(this.player.position);
-      this.orbitControls.enabled = true;
       return;
     }
 
@@ -220,10 +258,11 @@ export class Game {
   }
 
   #onMouseUp(event) {
+    if (!this.gameStarted || this.playerDead) {
+      return;
+    }
+
     if (event.button === 2) {
-      this.isOrbiting = false;
-      this.orbitControls.enabled = false;
-      updateTopDownCameraFollow(this.camera, this.player.position);
       return;
     }
 
@@ -364,6 +403,28 @@ export class Game {
     }
   }
 
+  #triggerPlayerDeath() {
+    if (this.playerDead) {
+      return;
+    }
+
+    this.playerDead = true;
+    this.playerAlive = false;
+    this.player.playAnimation("Death");
+    this.player.setDead();
+
+    this.deathScreenTimeoutId = setTimeout(() => {
+      if (this.deathScreen) {
+        this.deathScreen.destroy();
+      }
+      this.deathScreen = new DeathScreen(() => {
+        location.reload();
+      });
+      this.deathScreen.show();
+      this.deathScreenTimeoutId = null;
+    }, 500);
+  }
+
   #handleEnemyPlayerCollision() {
     if (!this.playerAlive) {
       return;
@@ -380,7 +441,7 @@ export class Game {
       );
 
       if (distance <= PLAYER_HIT_RADIUS) {
-        this.playerAlive = false;
+        this.#triggerPlayerDeath();
         this.effects.triggerKillFlash();
         this.effects.triggerGameOverFlash();
         this.effects.shake();
@@ -403,7 +464,7 @@ export class Game {
       );
 
       if (distance <= PLAYER_HIT_RADIUS) {
-        this.playerAlive = false;
+        this.#triggerPlayerDeath();
         this.effects.triggerKillFlash();
         this.effects.triggerGameOverFlash();
         this.effects.shake();
@@ -422,22 +483,27 @@ export class Game {
         continue;
       }
 
+      if (!enemy.canBeRemoved()) {
+        continue;
+      }
+
       enemy.destroy(this.scene);
       this.enemies.splice(i, 1);
     }
   }
 
   update(deltaSeconds) {
-    if (this.playerAlive) {
-      const previousX = this.player.position.x;
-      const previousZ = this.player.position.z;
+    const previousX = this.player.position.x;
+    const previousZ = this.player.position.z;
 
-      this.player.update(
-        deltaSeconds,
-        this.keys,
-        this.mouseWorldPos,
-        this.camera.currentAzimuth ?? 0,
-      );
+    this.player.update(
+      deltaSeconds,
+      this.playerDead ? this.noInputKeys : this.keys,
+      this.playerDead ? null : this.mouseWorldPos,
+      this.camera.currentAzimuth ?? 0,
+    );
+
+    if (this.playerAlive) {
       this.#resolvePlayerWallCollision(previousX, previousZ);
     }
 
