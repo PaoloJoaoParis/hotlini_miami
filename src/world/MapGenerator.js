@@ -6,12 +6,13 @@ export const CELL_TYPES = {
 const MAP_WIDTH = 40;
 const MAP_HEIGHT = 40;
 
-const MIN_ROOM_COUNT = 6;
-const MAX_ROOM_COUNT = 10;
-const MIN_ROOM_WIDTH = 4;
-const MAX_ROOM_WIDTH = 10;
-const MIN_ROOM_HEIGHT = 4;
-const MAX_ROOM_HEIGHT = 8;
+const MIN_ROOM_COUNT = 5;
+const MAX_ROOM_COUNT = 7;
+const MIN_ROOM_WIDTH = 6;
+const MAX_ROOM_WIDTH = 14;
+const MIN_ROOM_HEIGHT = 6;
+const MAX_ROOM_HEIGHT = 12;
+const CORRIDOR_WIDTH = 2;
 const MAX_PLACEMENT_ATTEMPTS = 200;
 
 function randomIntInclusive(rng, min, max) {
@@ -48,18 +49,30 @@ function carveRoom(grid, room) {
 function carveHorizontalCorridor(grid, xFrom, xTo, y) {
   const start = Math.min(xFrom, xTo);
   const end = Math.max(xFrom, xTo);
+  const height = grid.length;
 
   for (let x = start; x <= end; x += 1) {
-    grid[y][x] = CELL_TYPES.FLOOR;
+    for (let offset = 0; offset < CORRIDOR_WIDTH; offset += 1) {
+      const row = y + offset;
+      if (row >= 0 && row < height) {
+        grid[row][x] = CELL_TYPES.FLOOR;
+      }
+    }
   }
 }
 
 function carveVerticalCorridor(grid, yFrom, yTo, x) {
   const start = Math.min(yFrom, yTo);
   const end = Math.max(yFrom, yTo);
+  const width = grid[0]?.length ?? 0;
 
   for (let y = start; y <= end; y += 1) {
-    grid[y][x] = CELL_TYPES.FLOOR;
+    for (let offset = 0; offset < CORRIDOR_WIDTH; offset += 1) {
+      const column = x + offset;
+      if (column >= 0 && column < width) {
+        grid[y][column] = CELL_TYPES.FLOOR;
+      }
+    }
   }
 }
 

@@ -25,6 +25,13 @@ export class Game {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x101010);
 
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    dirLight.position.set(5, 20, 5);
+    this.scene.add(dirLight);
+
+    const ambientLight = new THREE.AmbientLight(0x333355, 1.0);
+    this.scene.add(ambientLight);
+
     const aspect = window.innerWidth / window.innerHeight;
     this.camera = createTopDownCamera(aspect);
     this.renderer = new Renderer(container);
@@ -158,6 +165,13 @@ export class Game {
 
   #onKeyDown(event) {
     this.keys.add(event.code);
+
+    if (event.key === "a" || event.key === "A") {
+      this.camera.onKeyDown("a");
+    }
+    if (event.key === "e" || event.key === "E") {
+      this.camera.onKeyDown("e");
+    }
   }
 
   #onKeyUp(event) {
@@ -418,7 +432,12 @@ export class Game {
       const previousX = this.player.position.x;
       const previousZ = this.player.position.z;
 
-      this.player.update(deltaSeconds, this.keys, this.mouseWorldPos);
+      this.player.update(
+        deltaSeconds,
+        this.keys,
+        this.mouseWorldPos,
+        this.camera.currentAzimuth ?? 0,
+      );
       this.#resolvePlayerWallCollision(previousX, previousZ);
     }
 
@@ -483,7 +502,11 @@ export class Game {
       this.orbitControls.target.copy(this.player.position);
       this.orbitControls.update();
     } else {
-      updateTopDownCameraFollow(this.camera, this.player.position);
+      updateTopDownCameraFollow(
+        this.camera,
+        this.player.position,
+        deltaSeconds,
+      );
     }
 
     this.effects.applyCameraShake(this.camera);

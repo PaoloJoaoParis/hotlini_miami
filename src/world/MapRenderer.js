@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { CELL_TYPES } from "./MapGenerator.js";
 
-const FLOOR_COLOR = 0x1a1a2e;
-const WALL_COLOR = 0x16213e;
+const FLOOR_COLOR = 0x0d0d1a;
+const WALL_TOP_COLOR = 0x2a2a4a;
+const WALL_SIDE_COLOR = 0x1a1a3a;
 
 function cellToWorldPosition(cellX, cellY, gridWidth, gridHeight) {
   return {
@@ -18,8 +19,33 @@ export class MapRenderer {
     this.floorGeometry = new THREE.PlaneGeometry(1, 1);
     this.floorMaterial = new THREE.MeshBasicMaterial({ color: FLOOR_COLOR });
 
-    this.wallGeometry = new THREE.BoxGeometry(1, 1.5, 1);
-    this.wallMaterial = new THREE.MeshBasicMaterial({ color: WALL_COLOR });
+    this.wallGeometry = new THREE.BoxGeometry(1, 2.0, 1);
+    this.wallMaterials = [
+      new THREE.MeshLambertMaterial({
+        color: WALL_SIDE_COLOR,
+        side: THREE.DoubleSide,
+      }),
+      new THREE.MeshLambertMaterial({
+        color: WALL_SIDE_COLOR,
+        side: THREE.DoubleSide,
+      }),
+      new THREE.MeshLambertMaterial({
+        color: WALL_TOP_COLOR,
+        side: THREE.DoubleSide,
+      }),
+      new THREE.MeshLambertMaterial({
+        color: WALL_SIDE_COLOR,
+        side: THREE.DoubleSide,
+      }),
+      new THREE.MeshLambertMaterial({
+        color: WALL_SIDE_COLOR,
+        side: THREE.DoubleSide,
+      }),
+      new THREE.MeshLambertMaterial({
+        color: WALL_SIDE_COLOR,
+        side: THREE.DoubleSide,
+      }),
+    ];
   }
 
   render(mapData) {
@@ -48,8 +74,8 @@ export class MapRenderer {
           continue;
         }
 
-        const wallMesh = new THREE.Mesh(this.wallGeometry, this.wallMaterial);
-        wallMesh.position.set(worldPos.x, 0.75, worldPos.z);
+        const wallMesh = new THREE.Mesh(this.wallGeometry, this.wallMaterials);
+        wallMesh.position.set(worldPos.x, 1.0, worldPos.z);
         this.scene.add(wallMesh);
         wallMeshes.push(wallMesh);
       }

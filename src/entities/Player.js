@@ -79,7 +79,11 @@ export class Player {
       .addScaledVector(this.direction, SHOOT_OFFSET);
 
     const bullet = new Bullet(scene, spawnPosition, this.direction.clone(), {
-      speed: THREE.MathUtils.lerp(MIN_BULLET_SPEED, MAX_BULLET_SPEED, chargeRatio),
+      speed: THREE.MathUtils.lerp(
+        MIN_BULLET_SPEED,
+        MAX_BULLET_SPEED,
+        chargeRatio,
+      ),
       size: THREE.MathUtils.lerp(MIN_BULLET_SIZE, MAX_BULLET_SIZE, chargeRatio),
       lifetime: THREE.MathUtils.lerp(
         MIN_BULLET_LIFETIME,
@@ -95,7 +99,7 @@ export class Player {
     return bullet;
   }
 
-  update(delta, keys, mouseWorldPos) {
+  update(delta, keys, mouseWorldPos, cameraAzimuth = 0) {
     let moveX = 0;
     let moveZ = 0;
 
@@ -112,10 +116,20 @@ export class Player {
       moveX += 1;
     }
 
-    this.moveDelta.set(moveX, 0, moveZ);
+    const inputLength = Math.hypot(moveX, moveZ);
 
-    if (this.moveDelta.lengthSq() > 0) {
-      this.moveDelta.normalize().multiplyScalar(PLAYER_SPEED * delta);
+    if (inputLength > 0) {
+      moveX /= inputLength;
+      moveZ /= inputLength;
+
+      const cos = Math.cos(cameraAzimuth);
+      const sin = Math.sin(cameraAzimuth);
+      const worldMoveX = moveX * cos + moveZ * sin;
+      const worldMoveZ = -moveX * sin + moveZ * cos;
+
+      this.moveDelta
+        .set(worldMoveX, 0, worldMoveZ)
+        .multiplyScalar(PLAYER_SPEED * delta);
       this.root.position.add(this.moveDelta);
     }
 
